@@ -1,0 +1,309 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Parameters": {
+        "Email" : {
+            "Type": "String",
+            "Description": "Quokka will use this email to contact you"            
+        },
+        "CodeBucket": {
+            "Type": "String",
+            "Description": "Lambda code bucket",
+            "AllowedPattern": "^[a-z0-9\\.\\-]{3,63}+$"
+        },
+        "CodeKey": {
+            "Type": "String",
+            "Description": "Lambda code key",
+            "AllowedPattern": "^(:?[a-zA-Z0-9]+\/)*[^\/]*$"
+        },
+        "UID" : {
+            "Type": "String",
+            "Description": "Unique value appended to S3 bucket names",
+            "MinLength": "5", 
+            "AllowedPattern": "^(:?[a-zA-Z0-9]+\\-)*[a-zA-Z0-9]{5,}$"
+        }
+    },
+    "Resources": {
+        "quokkaS3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Description": "Lambda deployment and data bucket",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+                "BucketName": {
+                    "Fn::Join": [
+                        "-",
+                        [
+                            "quokka-data",
+                            {
+                                "Ref": "UID"
+                            }
+                        ]
+                    ]
+                },
+                "AccessControl": "Private"
+            }
+        },
+        "quokkaSNSTopic": {
+            "Type": "AWS::SNS::Topic",
+            "Properties": {
+                "DisplayName": "Quokka - developer friendly contact form",
+                "TopicName": "quokka-contact-topic",
+                "Subscription": [
+                    {
+                        "Protocol" : "email",
+                        "Endpoint" : {
+                            "Ref": "Email"
+                        }
+                    }
+                ]
+            },
+            "DependsOn": [
+                "quokkaS3Bucket"
+            ]
+        },
+        "quokkaLambdaExecutionRole": {
+            "Type": "AWS::IAM::Role",        
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "quokka-lambda-execution-role",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "logs:CreateLogGroup",
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents"
+                                    ],
+                                    "Resource": "arn:aws:logs:*:*:*"
+                                },                                
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "s3:ListBucket"
+                                    ],
+                                    "Resource": {
+                                        "Fn::GetAtt": [
+                                            "quokkaS3Bucket",
+                                            "Arn"
+                                        ]
+                                    }
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "s3:GetObject",
+                                        "s3:PutObject"
+                                    ],
+                                    "Resource": {
+                                        "Fn::Join": [
+                                            "",
+                                            [
+                                                {
+                                                    "Fn::GetAtt": [
+                                                        "quokkaS3Bucket",
+                                                        "Arn"
+                                                    ]
+                                                },
+                                                "/*"
+                                            ]                                            
+                                        ]
+                                        
+                                    }
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "sns:Publish"
+                                    ],
+                                    "Resource": {
+                                        "Ref": "quokkaSNSTopic"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "DependsOn": [
+                "quokkaS3Bucket",
+                "quokkaSNSTopic"
+            ]
+        },
+        "quokkaLambda": {
+            "Type": "AWS::Lambda::Function",
+            "Description": "Lambda request handler",
+            "Properties": {
+                "Runtime": "nodejs6.10",
+                "Handler": "index.handler",
+                "Timeout": "120",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "quokkaLambdaExecutionRole",
+                        "Arn"
+                    ]
+                },
+                "Code": {
+                    "S3Bucket": {"Ref": "CodeBucket"},
+                    "S3Key": {"Ref": "CodeKey"}
+                },
+                "Environment": {
+                    "Variables" : { 
+                        "S3_BUCKET": {
+                            "Ref": "quokkaS3Bucket"
+                        },
+                        "SNS_ARN": {
+                            "Ref": "quokkaSNSTopic"
+                        },
+                        "NODE_PATH": "/var/task/src:/var/runtime:/var/task:/var/runtime/node_modules"
+                    }
+                }
+            },
+            "DependsOn": [
+                "quokkaLambdaExecutionRole",
+                "quokkaS3Bucket"
+            ]
+        },
+        "quokkaLambdaVersion": {
+            "Type": "AWS::Lambda::Version",            
+            "Properties": {
+                "FunctionName": {
+                    "Ref": "quokkaLambda"
+                },
+                "Description": "Origin request interceptor code version"
+            },
+            "DependsOn": [
+                "quokkaLambda"
+            ]
+        },
+
+        "quokkaApi": {
+            "Type" : "AWS::ApiGateway::RestApi",
+            "Properties" : {  
+                "Name" : "Quokka API",
+                "Description": "Quokka API Lambda proxy"
+            },
+            "DependsOn": [
+                "quokkaLambdaVersion"
+            ]
+        },
+
+        "quokkaApiLambdaInvokePermission": {
+            "Type": "AWS::Lambda::Permission",
+            "Description": "Permission has to exist before creating methods",
+            "Properties": {
+                "FunctionName": {
+                    "Fn::GetAtt": [
+                        "quokkaLambda",
+                        "Arn"
+                    ]
+                },
+                "Action": "lambda:InvokeFunction",
+                "Principal": "apigateway.amazonaws.com",
+                "SourceArn": {"Fn::Join": ["", ["arn:aws:execute-api:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":", {"Ref": "quokkaApi"}, "/*"]]}
+            },
+            "DependsOn": [
+                "quokkaApi",
+                "quokkaLambda"
+            ]
+        },
+
+        "quokkaApiResource": {
+            "Type": "AWS::ApiGateway::Resource",
+            "Properties": {
+                "RestApiId": { "Ref": "quokkaApi" },
+                "ParentId" : { "Fn::GetAtt": ["quokkaApi", "RootResourceId"] },
+                "PathPart": "{proxy+}"
+            },
+            "DependsOn": [
+                "quokkaApiLambdaInvokePermission"
+            ]
+        },
+
+        "quokkaApiRootResourceANY": {
+            "Type": "AWS::ApiGateway::Method",
+            "Properties": {
+                "RestApiId": {"Ref": "quokkaApi"},
+                "ResourceId": { "Fn::GetAtt": ["quokkaApi", "RootResourceId"] },
+                "HttpMethod": "ANY",
+                "AuthorizationType": "NONE",
+                "Integration": {
+                    "Type": "AWS_PROXY",
+                    "IntegrationHttpMethod": "POST",
+                    "Uri": { "Fn::Sub":"arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${quokkaLambda.Arn}/invocations"}
+                },
+                "MethodResponses": [
+                    {
+                        "StatusCode": "200"
+                    }                    
+                ]
+            },
+            "DependsOn": [
+                "quokkaApiResource"
+            ]
+        },
+        "quokkaApiProxyResourceANY": {
+            "Type": "AWS::ApiGateway::Method",
+            "Properties": {
+                "RestApiId": {"Ref": "quokkaApi"},
+                "ResourceId": {"Ref": "quokkaApiResource"},
+                "HttpMethod": "ANY",
+                "AuthorizationType": "NONE",
+                "Integration": {
+                    "Type": "AWS_PROXY",
+                    "IntegrationHttpMethod": "POST",
+                    "Uri": { "Fn::Sub":"arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${quokkaLambda.Arn}/invocations"}
+                },
+                "MethodResponses": [
+                    {
+                        "StatusCode": "200"
+                    }                    
+                ]
+            },
+            "DependsOn": [
+                "quokkaApiResource"
+            ]
+        },
+        "quokkaApiDeployment": {
+            "Type": "AWS::ApiGateway::Deployment",
+            "Properties": {
+              "RestApiId": { "Ref": "quokkaApi" },
+              "Description": "Quokka API deployment",
+              "StageName": "prod"
+            },
+            "DependsOn": [
+                "quokkaApiRootResourceANY",
+                "quokkaApiProxyResourceANY"
+            ]
+          }
+
+    },
+    "Outputs": {
+        "QuokkaApi": {
+            "Value": {
+                "Fn::Join": [
+                    "",
+                    ["https://",{ "Ref": "quokkaApi" }, ".execute-api.us-east-1.amazonaws.com/prod/"]
+                ]
+            }
+        }
+    }
+}

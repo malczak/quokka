@@ -1,0 +1,27 @@
+{
+  "name": "quokka",
+  "version": "1.0.0",
+  "description": "Quokka - Developer friendly feedback",
+  "main": "deploy.js",
+  "scripts": {
+    "install-watch": "npm i --quiet && npm run watch",
+    "eslint": "./node_modules/.bin/eslint .",
+    "deploy": "AWS_REGION=us-east-1 DEBUG=quokka:* NODE_PATH=${PWD} node deploy.js",
+    "build-aws-resource": "pack-zip",
+    "validate-cform": "aws cloudformation validate-template --template-body file://quokka.cform"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "aws-sdk": "^2.169.0",
+    "cli-spinner": "^0.2.8",
+    "co": "^4.6.0",
+    "debug": "^3.1.0",
+    "eslint": "4.1.1",
+    "eslint-plugin-json": "^1.2.0",
+    "moment": "^2.19.4",
+    "pack-zip": "^0.2.2",
+    "uuid": "^3.2.1"
+  },
+  "dependencies": {}
+}

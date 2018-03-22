@@ -297,7 +297,28 @@
 
     },
     "Outputs": {
+        "QuokkaLambdaID": {
+            "Description": "Quoka requests handler Lambda ID",
+            "Value": { "Ref": "quokkaLambda"}
+        },
+        "QuokkaLambdaArn": {
+            "Description": "Quoka requests handler Lambda Arn",
+            "Value": { "Fn::GetAtt": ["quokkaLambda", "Arn"]}
+        },
+        "QuokkaLambdaVersion": {
+            "Description": "Quoka requests handler Lambda Version",
+            "Value": { "Fn::GetAtt": ["quokkaLambdaVersion", "Version"]}
+        },
+        "QuokkaSNS": {
+            "Description": "Quoka SNS topic",
+            "Value": { "Ref": "quokkaSNSTopic"}
+        },
+        "QuokkaBucket": {
+            "Description": "Quoka S3 bucket",
+            "Value": { "Ref": "quokkaS3Bucket"}
+        },
         "QuokkaApi": {
+            "Description": "Quoka API Gateway endpoint",
             "Value": {
                 "Fn::Join": [
                     "",

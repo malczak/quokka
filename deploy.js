@@ -3,8 +3,8 @@ const childProcess = require('child_process');
 const co = require('co');
 const debug = require('debug');
 const fs = require('fs');
-// const uuid = require('uuid');
-// const moment = require('moment');
+const uuid = require('uuid');
+const parseArgs = require('minimist')
 const path = require('path');
 const {pack} = require('./packager');
 const {Spinner} = require('cli-spinner');
@@ -19,23 +19,42 @@ const Consts = {
     bucketNameBase: 'quokka-data',
     templateFileName: 'quokka.cform',
     lambdaFileName: 'quokka-lambda.zip',
-    lambdaDeploymentsPrefix: 'deployments' 
+    lambdaDeploymentsPrefix: 'deployments',
+    installerPolicyName: 'QuokkaInstallerPolicy'
 };
 
 const Parameters = {
     email: 'mail@example.com',
-    uid: 'deafault-value' //uuid();
+    uid: uuid()
 };
 
 function expectedArchiveName(packageConfig) {
     return packageConfig.name.replace(/^@/, '').replace(/\//, '-') + '-' + packageConfig.version + '.tgz';
 }
 
+aws.config.update({region: Consts.awsRegion});
+const spinner = new Spinner();
 
-async function deleteQuokka() {
+async function waitForStackStatus(stackId, status, spinner, cform) {
+    spinner.start();
+
+    let completed = false;
+    let stackStatus = '?';
+    do {
+        spinner.setSpinnerTitle(`Waiting for CloudFormation stack:; status = ${stackStatus}`);
+        result = await cform.describeStacks({StackName: stackId}).promise();
+        stackStatus = result.Stacks[0].StackStatus;
+        completed = stackStatus != status;
+    } while (!completed);
+
+    spinner.stop(true);
+    return result.Stacks[0];
+}
+
+
+async function uninstallQuokka() {
     let result = {};
 
-    const spinner = new Spinner();
     spinner.setSpinnerString(11);
 
     let cform = new aws.CloudFormation();
@@ -57,19 +76,57 @@ async function deleteQuokka() {
     
     spinner.stop(true);
 
+    await waitForStackStatus(stack.StackId, 'DELETE_COMPLETE', spinner, cform);
+
     logInfo(result);
 }
 
 async function installQuokka() {    
     let result = {};
-    
-    const spinner = new Spinner();
+        
     spinner.setSpinnerString(11);
 
-    let cform = new aws.CloudFormation();
+    // Make sure we have all the rights
+    spinner.setSpinnerTitle('Set installer policy');
+    spinner.start();
+    let iam = new aws.IAM();
+
+    const policyStr = fs.readFileSync('installer-policy.json', 'utf-8');
+    const policy = JSON.parse(policyStr);
+    const user = await iam.getUser().promise();
+
+    await iam.putUserPolicy( {
+        PolicyDocument: JSON.stringify(policy),
+        PolicyName: Consts.installerPolicyName,
+        UserName: user.User.UserName
+    }).promise();
+
+    spinner.stop(true);
+
+    let hasPolicy = false;
+    do {
+        logInfo('.');
+        try {
+            result = await iam.getUserPolicy( {
+                PolicyName: Consts.installerPolicyName,
+                UserName: user.User.UserName
+            }).promise(); 
+            
+            // Check if all rights are set
+            const fetchedPolicy = JSON.parse(unescape(result.PolicyDocument.toString()));
+            hasPolicy = true;
+            fetchedPolicy.Statement.forEach((statement, index) => {
+                const diff = statement.Action.filter(item => policy.Statement[index].Action.indexOf(item) == -1);
+                hasPolicy = hasPolicy && (diff.length == 0);
+            })
+        } catch (err) {
+            hasPolicy = false;
+        }
+    } while (!hasPolicy);   
 
     spinner.setSpinnerTitle('Tracking down Quokka');
     spinner.start();
+    let cform = new aws.CloudFormation();
 
     try {
         result = await cform.describeStacks({StackName: Consts.stackName}).promise();
@@ -92,6 +149,7 @@ async function installQuokka() {
         logInfo('Quokka stack not found');
     }
 
+    // Temporary Quokka bucket
     const bucketName = `tmp-${Consts.bucketNameBase}-${Parameters.uid}`.toLowerCase();
 
     // Lambda code path
@@ -177,34 +235,29 @@ async function installQuokka() {
         ]
     })).promise();
 
-    spinner.start();
-
-    const stackId = result.StackId;
-    let completed = false;
-    let stackStatus = '?';
-    do {
-        spinner.setSpinnerTitle(`Creating CloudFormation stack:; status = ${stackStatus}`);
-        result = await cform.describeStacks({StackName: stackId}).promise();
-        stackStatus = result.Stacks[0].StackStatus;
-        completed = stackStatus != 'CREATE_IN_PROGRESS';
-    } while (!completed);
-
-    spinner.stop(true);
-
-    if (stackStatus !== 'CREATE_COMPLETE') {
+    const stack = await waitForStackStatus(result.StackId, 'CREATE_IN_PROGRESS', spinner, cform);
+    if (stack.StackStatus !== 'CREATE_COMPLETE') {
         throw new Error('CloudFormation not created');
     }
     
-    logInfo(`Stack: ${logInfo(result.Stacks[0].StackId)}`);
-    logInfo(`Status: ${stackStatus}`);
-    logInfo(`Outputs: ${JSON.stringify(result.Stacks[0].Outputs, null, 2)}`);  
+    logInfo(`Stack: ${logInfo(stack.StackId)}`);
+    logInfo(`Status: ${stack.StackStatus}`);
+    logInfo(`Outputs: ${JSON.stringify(stack.Outputs, null, 2)}`);  
 };
 
-aws.config.update({region: Consts.awsRegion});
+const argv = parseArgs(process.argv.slice(2));
 
 try {
-    installQuokka();    
-    // deleteQuokka();
+    switch (argv.task) {
+        case 'install':
+                const email = argv.email;
+                Parameters.email = email;
+                installQuokka();
+            break;
+        case 'uninstall':
+                uninstallQuokka();
+            break;
+    }
 } catch (err) {
     logError(err);
 }

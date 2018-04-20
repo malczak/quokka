@@ -3,7 +3,7 @@
     "Parameters": {
         "Email" : {
             "Type": "String",
-            "Description": "Quokka will use this email to contact you"            
+            "Description": "Quokka will use this email to contact you"
         },
         "CodeBucket": {
             "Type": "String",
@@ -18,7 +18,7 @@
         "UID" : {
             "Type": "String",
             "Description": "Unique value appended to S3 bucket names",
-            "MinLength": "5", 
+            "MinLength": "5",
             "AllowedPattern": "^(:?[a-zA-Z0-9]+\\-)*[a-zA-Z0-9]{5,}$"
         }
     },
@@ -61,7 +61,7 @@
             ]
         },
         "quokkaLambdaExecutionRole": {
-            "Type": "AWS::IAM::Role",        
+            "Type": "AWS::IAM::Role",
             "Properties": {
                 "AssumeRolePolicyDocument": {
                     "Version": "2012-10-17",
@@ -94,7 +94,7 @@
                                         "logs:PutLogEvents"
                                     ],
                                     "Resource": "arn:aws:logs:*:*:*"
-                                },                                
+                                },
                                 {
                                     "Effect": "Allow",
                                     "Action": [
@@ -124,9 +124,9 @@
                                                     ]
                                                 },
                                                 "/*"
-                                            ]                                            
+                                            ]
                                         ]
-                                        
+
                                     }
                                 },
                                 {
@@ -152,7 +152,7 @@
             "Type": "AWS::Lambda::Function",
             "Description": "Lambda request handler",
             "Properties": {
-                "Runtime": "nodejs6.10",
+                "Runtime": "nodejs8.10",
                 "Handler": "index.handler",
                 "Timeout": "120",
                 "Role": {
@@ -166,7 +166,7 @@
                     "S3Key": {"Ref": "CodeKey"}
                 },
                 "Environment": {
-                    "Variables" : { 
+                    "Variables" : {
                         "S3_BUCKET": {
                             "Ref": "quokkaS3Bucket"
                         },
@@ -183,12 +183,12 @@
             ]
         },
         "quokkaLambdaVersion": {
-            "Type": "AWS::Lambda::Version",            
+            "Type": "AWS::Lambda::Version",
             "Properties": {
                 "FunctionName": {
                     "Ref": "quokkaLambda"
                 },
-                "Description": "Origin request interceptor code version"
+                "Description": "Quokka API handler code"
             },
             "DependsOn": [
                 "quokkaLambda"
@@ -197,7 +197,7 @@
 
         "quokkaApi": {
             "Type" : "AWS::ApiGateway::RestApi",
-            "Properties" : {  
+            "Properties" : {
                 "Name" : "Quokka API",
                 "Description": "Quokka API Lambda proxy"
             },
@@ -253,7 +253,7 @@
                 "MethodResponses": [
                     {
                         "StatusCode": "200"
-                    }                    
+                    }
                 ]
             },
             "DependsOn": [
@@ -275,7 +275,7 @@
                 "MethodResponses": [
                     {
                         "StatusCode": "200"
-                    }                    
+                    }
                 ]
             },
             "DependsOn": [
@@ -322,7 +322,7 @@
             "Value": {
                 "Fn::Join": [
                     "",
-                    ["https://",{ "Ref": "quokkaApi" }, ".execute-api.us-east-1.amazonaws.com/prod/"]
+                    ["https://",{ "Ref": "quokkaApi" }, ".execute-api.", {"Ref": "AWS::Region"}, ".amazonaws.com/prod/"]
                 ]
             }
         }
